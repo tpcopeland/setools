@@ -9,18 +9,47 @@ dateparse_parse(datestring, format = NULL)
 \arguments{
 \item{datestring}{Character string representing a date.}
 
-\item{format}{Optional format hint: "YMD", "DMY", or "MDY". If NULL,
-auto-detected from pattern.}
+\item{format}{Optional format hint: \code{"YMD"}, \code{"DMY"}, or \code{"MDY"}. If NULL
+(default), auto-detected from the string pattern.}
 }
 \value{
-A list with \verb{$date} (Date object) and \verb{$datestr} (original string).
+A list with \verb{$date} (R Date object) and \verb{$datestr} (original string).
 }
 \description{
 Auto-detects format from common Swedish registry patterns (ISO YYYY-MM-DD,
-compact YYYYMMDD, European DD/MM/YYYY). Defaults to YMD for Swedish data.
+compact YYYYMMDD, European DD/MM/YYYY, Stata text DDmonYYYY). Defaults to
+YMD for Swedish data.
+}
+\details{
+Auto-detection rules:
+\itemize{
+\item \code{YYYY-MM-DD} (e.g., "2020-01-15") -> YMD
+\item \code{YYYYMMDD} (e.g., "20200115") -> YMD
+\item \code{DD/MM/YYYY} (e.g., "15/01/2020") -> DMY
+\item \code{DDmonYYYY} (e.g., "15jan2020") -> DMY (Stata text format)
+\item Everything else -> YMD (Swedish default)
+}
+
+If auto-detection fails, all format families are tried as fallback.
 }
 \examples{
-dateparse_parse("2020-01-15")
-dateparse_parse("20200115")
-dateparse_parse("15/01/2020", format = "DMY")
+# ISO format (most common in Swedish registers)
+dateparse_parse("2020-01-15")$date
+#> [1] "2020-01-15"
+
+# Compact YYYYMMDD (common in integer date columns)
+dateparse_parse("20200115")$date
+
+# European DD/MM/YYYY
+dateparse_parse("15/01/2020")$date
+
+# Stata text format
+dateparse_parse("15jan2020")$date
+
+# Explicit format hint
+dateparse_parse("01/15/2020", format = "MDY")$date
+}
+\seealso{
+\code{\link[=dateparse_validate]{dateparse_validate()}} for checking date ranges,
+\code{\link[=dateparse_window]{dateparse_window()}} for computing time windows
 }

@@ -15,37 +15,111 @@ sustainedss(
 )
 }
 \arguments{
-\item{dt}{A data.frame or data.table with EDSS measurements.}
+\item{dt}{A data.frame or data.table with EDSS measurements (long format,
+one row per measurement).}
 
 \item{idvar}{Name of the person ID column.}
 
-\item{edssvar}{Name of the EDSS score column (numeric).}
+\item{edssvar}{Name of the EDSS score column (numeric, 0-10 scale).}
 
 \item{datevar}{Name of the date column (Date class).}
 
-\item{threshold}{EDSS threshold value (must be positive).}
+\item{threshold}{EDSS threshold value (must be positive). The first date
+where EDSS >= this value is the candidate sustained event.}
 
-\item{confirmwindow}{Days for confirmation window (default 182).}
+\item{confirmwindow}{Days for confirmation window (default 182, approx.
+6 months). Measurements within \verb{(event_date, event_date + confirmwindow]}
+are checked for sustaining.}
 
 \item{baselinethreshold}{Minimum EDSS to require in confirmation window.
-Defaults to threshold value.}
+Defaults to \code{threshold} if not specified.}
 }
 \value{
-A list with \verb{$data} (data.table with one row per person with a
-sustained event, containing idvar and \code{sustained_dt}) and \verb{$info}
-containing N_events, iterations, threshold, confirmwindow.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{A data.table with one row per person who has a sustained
+event, containing the person ID and \code{sustained_dt} (Date). Persons
+who never reach or sustain the threshold are excluded (zero rows).}
+\item{\verb{$info}}{A list with: \code{N_events} (number of persons with sustained
+events), \code{iterations} (number of algorithm iterations), \code{threshold},
+\code{confirmwindow}.}
+}
 }
 \description{
 Iterative algorithm that identifies the first date when EDSS reaches a
 threshold and is sustained throughout a confirmation window. Events that
 are not confirmed as sustained are rejected and the search repeats.
 }
+\details{
+The algorithm works as follows:
+\enumerate{
+\item Find the first date where EDSS >= \code{threshold} for each person.
+\item Check the confirmation window: within \code{confirmwindow} days after
+that date, the minimum EDSS must remain >= \code{baselinethreshold} and the
+last value in the window must remain >= \code{threshold}.
+\item If not sustained, the EDSS at the event date is replaced with the
+last observed value in the window (using \code{min()} for same-date
+duplicates, matching Stata behavior), and the search restarts.
+\item This repeats until no more rejections occur or 1000 iterations
+are reached.
+}
+
+If no measurements exist in the confirmation window after the candidate
+event, the event is considered sustained (absence of disconfirmation).
+}
 \examples{
-edss <- data.table::data.table(
+library(data.table)
+
+# --- Basic sustained threshold crossing ---
+edss <- data.table(
   pid = rep("A", 4),
-  edss = c(2.0, 3.5, 3.5, 4.0),
-  date = as.Date(c("2010-01-01", "2011-06-01", "2011-09-01", "2012-01-01"))
+  edss = c(2.0, 4.5, 4.0, 4.5),
+  date = as.Date(c("2010-01-01", "2010-06-01", "2010-09-01", "2010-12-01"))
 )
-sustainedss(edss, idvar = "pid", edssvar = "edss", datevar = "date",
-            threshold = 3.0)
+res <- sustainedss(edss, idvar = "pid", edssvar = "edss",
+                   datevar = "date", threshold = 4.0)
+res$data
+#>    pid sustained_dt
+#> 1:   A   2010-06-01
+
+# --- Rejected event (drops below threshold, then recovers) ---
+edss2 <- data.table(
+  pid = rep("A", 4),
+  edss = c(2.0, 4.5, 2.0, 4.5),
+  date = as.Date(c("2010-01-01", "2010-06-01", "2010-09-01", "2011-06-01"))
+)
+res2 <- sustainedss(edss2, idvar = "pid", edssvar = "edss",
+                    datevar = "date", threshold = 4.0)
+res2$data$sustained_dt  # 2011-06-01 (first event rejected, second sustained)
+res2$info$iterations    # >= 2 (at least one rejection cycle)
+
+# --- No measurements in confirmation window = sustained ---
+edss3 <- data.table(
+  pid = rep("A", 2),
+  edss = c(2.0, 4.5),
+  date = as.Date(c("2010-01-01", "2010-06-01"))
+)
+res3 <- sustainedss(edss3, idvar = "pid", edssvar = "edss",
+                    datevar = "date", threshold = 4.0)
+nrow(res3$data)  # 1 (absence of disconfirmation = sustained)
+
+# --- Multiple patients: some sustained, some not ---
+edss4 <- data.table(
+  pid = c(rep("A", 3), rep("B", 3), rep("C", 3)),
+  edss = c(2.0, 4.5, 4.0,      # A: sustained at 4.0 threshold
+           1.0, 3.0, 3.5,       # B: never reaches 4.0
+           3.0, 4.0, 2.0),      # C: reaches 4.0 but drops
+  date = as.Date(c("2010-01-01", "2010-06-01", "2010-12-01",
+                    "2010-01-01", "2010-06-01", "2010-12-01",
+                    "2010-01-01", "2010-06-01", "2010-12-01"))
+)
+res4 <- sustainedss(edss4, idvar = "pid", edssvar = "edss",
+                    datevar = "date", threshold = 4.0)
+res4$data
+# Only patient A has a sustained event
+res4$info$N_events  # 1
+}
+\seealso{
+\code{\link[=cdp]{cdp()}} for confirmed disability progression with baseline and
+diagnosis date, \code{\link[=pira]{pira()}} for relapse-adjusted classification
 }

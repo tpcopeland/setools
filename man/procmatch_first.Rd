@@ -7,32 +7,90 @@
 procmatch_first(dt, codes, procvars, datevar, idvar, prefix = FALSE)
 }
 \arguments{
-\item{dt}{A data.frame or data.table with procedure code and date columns.}
+\item{dt}{A data.frame or data.table with procedure code columns and a
+date column (one row per visit/episode).}
 
-\item{codes}{Character vector of procedure codes.}
+\item{codes}{Character vector of procedure codes to match. Also accepts
+space-separated or comma-separated strings.}
 
 \item{procvars}{Character vector of column names containing procedure codes.}
 
-\item{datevar}{Name of the date column.}
+\item{datevar}{Name of the date column (Date class).}
 
 \item{idvar}{Name of the person ID column.}
 
-\item{prefix}{Logical; if TRUE, use prefix matching.}
+\item{prefix}{Logical; if TRUE, use prefix matching. Default FALSE.}
 }
 \value{
-A list with \verb{$data} (data.table with \code{proc_ever} and \code{proc_first_dt}
-columns added) and \verb{$info}.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{The input data.table with \code{proc_ever} (integer 0/1)
+and \code{proc_first_dt} (Date or NA) columns added.}
+\item{\verb{$info}}{A list with: \code{varname} ("proc_ever"),
+\code{datevarname} ("proc_first_dt"), \code{codes}, \code{n_codes},
+\code{n_persons} (unique persons with a match),
+\code{n_matches} (total matching rows).}
+}
 }
 \description{
-Identifies whether each person ever had a matching procedure and extracts
-the earliest date of that match.
+Identifies whether each person ever had a matching procedure code and
+extracts the earliest date of that match. Useful for determining time to
+first procedure or creating binary exposure indicators.
+}
+\details{
+The function first matches rows using the same logic as \code{\link[=procmatch_match]{procmatch_match()}},
+then collapses by person to find the earliest matching date. Two columns
+are added to the original data:
+\itemize{
+\item \code{proc_ever} - Binary indicator (1 = person has at least one match,
+0 = never matched)
+\item \code{proc_first_dt} - Date of the earliest match for that person
+(NA if \code{proc_ever = 0})
+}
+
+These values are repeated across all rows for each person (merged back to
+the original data).
 }
 \examples{
-dt <- data.table::data.table(
-  pid = c("A", "A", "B"),
-  op1 = c("AB123", "CD456", "AB123"),
-  date = as.Date(c("2015-01-01", "2016-01-01", "2017-01-01"))
+library(data.table)
+
+# --- Find earliest procedure date per person ---
+dt <- data.table(
+  pid = c("A", "A", "A", "B", "B"),
+  op1 = c("ABC10", "ABC10", "DEF20", "GHI30", "ABC10"),
+  date = as.Date(c("2015-01-01", "2016-01-01", "2017-01-01",
+                    "2015-06-01", "2018-01-01"))
 )
-procmatch_first(dt, codes = "AB123", procvars = "op1",
-                datevar = "date", idvar = "pid")
+res <- procmatch_first(dt, codes = "ABC10", procvars = "op1",
+                       datevar = "date", idvar = "pid")
+res$data
+# A: proc_ever=1, proc_first_dt=2015-01-01 (earliest of two matches)
+# B: proc_ever=1, proc_first_dt=2018-01-01
+
+res$info$n_persons  # 2 (both A and B matched)
+
+# --- Person with no matching codes ---
+dt2 <- data.table(
+  pid = c("A", "B"),
+  op1 = c("ABC10", "XYZ99"),
+  date = as.Date(c("2015-01-01", "2016-01-01"))
+)
+res2 <- procmatch_first(dt2, codes = "ABC10", procvars = "op1",
+                        datevar = "date", idvar = "pid")
+res2$data[pid == "B", proc_ever]     # 0
+res2$data[pid == "B", proc_first_dt] # NA
+
+# --- Prefix matching with multiple procedure columns ---
+dt3 <- data.table(
+  pid = c("A", "A"),
+  op1 = c("AB001", "CD999"),
+  op2 = c(NA, "AB050"),
+  date = as.Date(c("2015-01-01", "2016-01-01"))
+)
+res3 <- procmatch_first(dt3, codes = "AB", procvars = c("op1", "op2"),
+                        datevar = "date", idvar = "pid", prefix = TRUE)
+res3$data[pid == "A", proc_first_dt]  # 2015-01-01 (AB001 in op1)
+}
+\seealso{
+\code{\link[=procmatch_match]{procmatch_match()}} for row-level matching without collapsing
 }

@@ -7,20 +7,36 @@
 dateparse_validate(start, end, format = NULL)
 }
 \arguments{
-\item{start}{Start date string.}
+\item{start}{Start date as a character string or Date object.}
 
-\item{end}{End date string.}
+\item{end}{End date as a character string or Date object.}
 
-\item{format}{Optional format hint passed to \code{dateparse_parse()}.}
+\item{format}{Optional format hint passed to \code{\link[=dateparse_parse]{dateparse_parse()}}. Ignored
+if Date objects are provided.}
 }
 \value{
-A list with \verb{$start_date}, \verb{$end_date} (Date objects),
-\verb{$span_days}, \verb{$span_years}.
+A list with:
+\describe{
+\item{\verb{$start_date}}{Parsed start Date}
+\item{\verb{$end_date}}{Parsed end Date}
+\item{\verb{$span_days}}{Integer span in days (inclusive)}
+\item{\verb{$span_years}}{Approximate span in years (rounded to 1 decimal)}
+}
 }
 \description{
-Parses start and end date strings, validates ordering, and computes span.
+Parses start and end date strings (or Date objects), validates that start
+is not after end, and computes the span in days and years.
 }
 \examples{
+# String input
 dateparse_validate("2010-01-01", "2020-12-31")
+#> $span_days = 4018, $span_years = 11.0
+
+# Date object input
 dateparse_validate(as.Date("2010-01-01"), as.Date("2020-12-31"))
+
+# Throws error if start > end
+\dontrun{
+dateparse_validate("2020-01-01", "2010-01-01")
+}
 }

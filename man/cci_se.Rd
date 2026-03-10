@@ -26,19 +26,26 @@ cci_se(
 \item{dateformat}{How to interpret the date column:
 \itemize{
 \item \code{"stata"} (default): R Date class
-\item \code{"yyyymmdd"}: integer YYYYMMDD
+\item \code{"yyyymmdd"}: integer YYYYMMDD (e.g., \code{20100315L})
 \item \code{"ymd"}: character YYYY-MM-DD string
 }}
 
 \item{components}{Logical; if TRUE, include individual comorbidity indicators
-in output.}
+(e.g., \code{cci_mi}, \code{cci_chf}, ...) in output. Default FALSE.}
 
 \item{prefix}{Prefix for component variable names (default \code{"cci_"}).}
 }
 \value{
-A list with \verb{$data} (data.table collapsed to one row per patient
-with \code{charlson} score and optionally component indicators) and \verb{$info}
-containing N_input, N_patients, N_any, mean_cci, max_cci.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{A data.table collapsed to one row per patient with
+a \code{charlson} column (integer weighted score). If \code{components = TRUE},
+also includes binary indicator columns for each of the 17 scored
+components (e.g., \code{cci_mi}, \code{cci_chf}, \code{cci_pvd}, ...).}
+\item{\verb{$info}}{A list with: \code{N_input} (total diagnosis rows),
+\code{N_patients} (unique patients), \code{N_any} (patients with score > 0),
+\code{mean_cci}, \code{max_cci}.}
+}
 }
 \description{
 Computes the Swedish adaptation of the Charlson Comorbidity Index from
@@ -47,13 +54,85 @@ codes as used in Swedish national health registries.
 }
 \details{
 Based on Ludvigsson et al. Clinical Epidemiology 2021;13:21-41.
+
+The function assigns each ICD code to one of 19 comorbidity components based
+on the ICD version in effect at the time of diagnosis. Swedish ICD version
+boundaries are:
+\itemize{
+\item ICD-7: year <= 1968
+\item ICD-8: 1969-1986
+\item ICD-9: 1987-1997
+\item ICD-10: >= 1997 (overlaps with ICD-9 at 1997)
+}
+
+After scoring, hierarchy rules are applied:
+\itemize{
+\item Complicated diabetes clears uncomplicated diabetes
+\item Metastatic cancer clears non-metastatic cancer
+\item Mild liver disease + ascites is promoted to severe liver disease
+}
+
+Component weights follow the original Charlson weighting: most components = 1,
+hemiplegia/diabetes with complications/renal disease/cancer = 2,
+severe liver disease = 3, metastatic cancer/AIDS = 6.
+
+ICD codes are matched after stripping dots and converting to uppercase, so
+\code{"I21.0"}, \code{"i210"}, and \code{"I210"} are all equivalent.
 }
 \examples{
-dx <- data.table::data.table(
+library(data.table)
+
+# --- Basic usage: two patients with ICD-10 diagnoses ---
+dx <- data.table(
   pid = c("A", "A", "B"),
   code = c("I21", "E119", "J44"),
   date = as.Date(c("2005-03-01", "2010-06-15", "2015-09-20"))
 )
-cci_se(dx, id = "pid", icd = "code", date = "date")
-cci_se(dx, id = "pid", icd = "code", date = "date", components = TRUE)
+res <- cci_se(dx, id = "pid", icd = "code", date = "date")
+res$data
+#>    pid charlson
+#> 1:   A        2
+#> 2:   B        1
+res$info$mean_cci
+
+# --- Component breakdown ---
+res2 <- cci_se(dx, id = "pid", icd = "code", date = "date", components = TRUE)
+res2$data
+# Shows cci_mi, cci_chf, cci_copd, etc. alongside charlson score
+
+# --- Hierarchy rules: metastatic cancer clears non-metastatic ---
+cancer_dx <- data.table(
+  pid = c("P1", "P1"),
+  code = c("C50", "C77"),
+  date = as.Date(c("2010-01-01", "2010-06-01"))
+)
+res3 <- cci_se(cancer_dx, id = "pid", icd = "code", date = "date",
+               components = TRUE)
+res3$data$cci_cancer  # 0 (cleared by metastatic)
+res3$data$cci_mets    # 1
+res3$data$charlson    # 6 (mets weight)
+
+# --- Integer YYYYMMDD dates (common in Swedish register extracts) ---
+dx_int <- data.table(
+  pid = c("A", "A"),
+  code = c("410", "250A"),
+  date = c(19900101L, 19900601L)
+)
+cci_se(dx_int, id = "pid", icd = "code", date = "date",
+       dateformat = "yyyymmdd")
+
+# --- Multi-patient cohort with summary statistics ---
+cohort <- data.table(
+  pid = c("A", "A", "B", "C", "C", "D"),
+  code = c("I21", "E100", "I50", "J44", "I63", "G30"),
+  date = as.Date(c("2005-01-01", "2005-06-01", "2010-03-15",
+                    "2008-01-01", "2009-01-01", "2015-09-01"))
+)
+res4 <- cci_se(cohort, id = "pid", icd = "code", date = "date")
+res4$info
+# N_patients = 4, N_any = 4, mean_cci, max_cci
+}
+\seealso{
+\code{\link[=procmatch_match]{procmatch_match()}} for procedure code matching,
+\code{\link[=migrations]{migrations()}} for cohort filtering
 }

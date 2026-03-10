@@ -7,22 +7,39 @@
 dateparse_filerange(index_start, index_end, lookback = 0L, followup = 0L)
 }
 \arguments{
-\item{index_start}{Start of index date range (date string).}
+\item{index_start}{Start of index date range (date string or YYYY-MM-DD).}
 
-\item{index_end}{End of index date range (date string).}
+\item{index_end}{End of index date range (date string or YYYY-MM-DD).}
 
-\item{lookback}{Lookback period in days.}
+\item{lookback}{Lookback period in days (default 0).}
 
-\item{followup}{Followup period in days.}
+\item{followup}{Followup period in days (default 0).}
 }
 \value{
-A list with index_start_year, index_end_year, file_start_year,
-file_end_year, lookback_years, followup_years.
+A list with:
+\describe{
+\item{\verb{$index_start_year}}{Year of the earliest index date}
+\item{\verb{$index_end_year}}{Year of the latest index date}
+\item{\verb{$file_start_year}}{Earliest year file needed (accounting for
+lookback)}
+\item{\verb{$file_end_year}}{Latest year file needed (accounting for
+followup)}
+\item{\verb{$lookback_years}}{Lookback period in years (ceiling)}
+\item{\verb{$followup_years}}{Followup period in years (ceiling)}
+}
 }
 \description{
 Calculates the range of year-based registry files needed given index dates
-and lookback/followup periods.
+and lookback/followup periods. Useful when Swedish registers are delivered
+as one file per year (e.g., NPR, LISA).
 }
 \examples{
-dateparse_filerange("2010-01-01", "2015-12-31", lookback = 3650, followup = 365)
+# Index dates 2010-2015, 10-year lookback, 1-year followup
+res <- dateparse_filerange("2010-01-01", "2015-12-31",
+                           lookback = 3650, followup = 365)
+res$file_start_year  # 2000 (2010 - 10 years)
+res$file_end_year    # 2016 (2015 + 1 year)
+
+# No lookback or followup: just the index date range
+dateparse_filerange("2010-01-01", "2015-12-31")
 }

@@ -1,39 +1,128 @@
 #' Progression Independent of Relapse Activity (PIRA)
 #'
-#' Identifies confirmed disability progression events and classifies them as
-#' PIRA (outside relapse windows) or RAW (relapse-associated worsening).
+#' Identifies confirmed disability progression (CDP) events and classifies each
+#' as either PIRA (progression independent of relapse activity, occurring outside
+#' relapse windows) or RAW (relapse-associated worsening, occurring within a
+#' relapse window).
 #'
-#' @param dt A data.frame or data.table with EDSS measurements (long format).
+#' @details
+#' The algorithm proceeds in three steps:
+#' \enumerate{
+#'   \item **CDP detection**: Runs the standard CDP algorithm (see [cdp()]) to
+#'     identify confirmed progression events from EDSS measurements.
+#'   \item **Relapse window check**: For each CDP event, checks whether any
+#'     relapse falls within the window
+#'     `[cdp_date - windowbefore, cdp_date + windowafter]`. Uses inclusive
+#'     boundaries (matching Stata `inrange()`).
+#'   \item **Classification**: Events outside all relapse windows are classified
+#'     as PIRA. Events inside at least one relapse window are classified as RAW.
+#' }
+#'
+#' If `rebaselinerelapse = TRUE`, the EDSS baseline is reset to the first
+#' measurement >= 30 days after the last relapse (instead of using the
+#' diagnosis-window baseline). This reflects the idea that post-relapse EDSS
+#' may settle at a new level.
+#'
+#' Each person gets at most one row in the output, with `pira_date` set for
+#' PIRA events and `raw_date` set for RAW events (the other is `NA`).
+#'
+#' @param dt A data.frame or data.table with EDSS measurements (long format,
+#'   one row per measurement).
 #' @param idvar Name of the person ID column.
-#' @param edssvar Name of the EDSS score column (numeric).
+#' @param edssvar Name of the EDSS score column (numeric, 0-10 scale).
 #' @param datevar Name of the measurement date column (Date class).
 #' @param dxdate Name of the diagnosis date column (Date class).
-#' @param relapses A data.frame or data.table with relapse data containing
-#'   id and relapse date columns.
-#' @param relapseidvar Name of the ID column in relapses (default: same as idvar).
-#' @param relapsedatevar Name of the relapse date column (default: "relapse_date").
-#' @param windowbefore Days before relapse to exclude (default 90).
-#' @param windowafter Days after relapse to exclude (default 30).
+#' @param relapses A data.frame or data.table with relapse data. Must contain
+#'   at least an ID column and a relapse date column. Multiple relapses per
+#'   person are supported (one row per relapse).
+#' @param relapseidvar Name of the ID column in `relapses`. Defaults to the
+#'   same as `idvar`.
+#' @param relapsedatevar Name of the relapse date column in `relapses`
+#'   (default `"relapse_date"`).
+#' @param windowbefore Days before a relapse that define the relapse-associated
+#'   window (default 90). A CDP event occurring within this many days before a
+#'   relapse is classified as RAW.
+#' @param windowafter Days after a relapse that define the relapse-associated
+#'   window (default 30). A CDP event occurring within this many days after a
+#'   relapse is classified as RAW.
 #' @param confirmdays Days for CDP confirmation (default 180).
 #' @param baselinewindow Days from diagnosis for baseline EDSS (default 730).
-#' @param rebaselinerelapse Logical; if TRUE, reset baseline after last relapse
-#'   (default FALSE).
-#' @return A list with `$data` (data.table with one row per person containing
-#'   `pira_date` and `raw_date`) and `$info` containing N_cdp, N_pira, N_raw,
-#'   windowbefore, windowafter, confirmdays, baselinewindow.
+#' @param rebaselinerelapse Logical; if TRUE, reset baseline EDSS to the first
+#'   measurement >= 30 days after the last relapse. Default FALSE.
+#' @return A list with two elements:
+#'   \describe{
+#'     \item{`$data`}{A data.table with one row per person who has a CDP event,
+#'       containing the person ID, `pira_date` (Date or NA), and `raw_date`
+#'       (Date or NA). Exactly one of these is non-NA per row.}
+#'     \item{`$info`}{A list with: `N_cdp` (total CDP events), `N_pira`
+#'       (PIRA events), `N_raw` (RAW events), `windowbefore`, `windowafter`,
+#'       `confirmdays`, `baselinewindow`.}
+#'   }
+#'
+#' @seealso [cdp()] for the underlying CDP algorithm,
+#'   [sustainedss()] for sustained threshold crossing
+#'
 #' @examples
-#' edss <- data.table::data.table(
-#'   pid = rep("A", 4),
-#'   edss = c(2.0, 3.5, 3.5, 3.5),
-#'   date = as.Date(c("2010-01-01", "2011-06-01", "2011-09-01", "2012-01-01")),
+#' library(data.table)
+#'
+#' # --- PIRA: CDP far from any relapse ---
+#' edss <- data.table(
+#'   pid = rep("A", 3),
+#'   edss = c(2.0, 4.0, 4.0),
+#'   date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01")),
 #'   dx = as.Date("2009-06-01")
 #' )
-#' rel <- data.table::data.table(
+#' rel <- data.table(
 #'   pid = "A",
-#'   relapse_date = as.Date("2010-06-01")
+#'   relapse_date = as.Date("2015-01-01")  # far from CDP
 #' )
-#' pira(edss, idvar = "pid", edssvar = "edss", datevar = "date",
-#'      dxdate = "dx", relapses = rel, relapseidvar = "pid")
+#' res <- pira(edss, idvar = "pid", edssvar = "edss", datevar = "date",
+#'             dxdate = "dx", relapses = rel, relapseidvar = "pid")
+#' res$data
+#' #>    pid  pira_date   raw_date
+#' #> 1:   A 2010-07-01       <NA>
+#' res$info$N_pira  # 1
+#' res$info$N_raw   # 0
+#'
+#' # --- RAW: CDP within relapse window ---
+#' rel2 <- data.table(
+#'   pid = "A",
+#'   relapse_date = as.Date("2010-06-15")  # 16 days before CDP
+#' )
+#' res2 <- pira(edss, idvar = "pid", edssvar = "edss", datevar = "date",
+#'              dxdate = "dx", relapses = rel2, relapseidvar = "pid")
+#' res2$info$N_raw   # 1 (within 90-day windowbefore)
+#' res2$info$N_pira  # 0
+#'
+#' # --- No relapses at all: all CDP classified as PIRA ---
+#' rel_empty <- data.table(pid = character(0),
+#'                         relapse_date = as.Date(character(0)))
+#' res3 <- pira(edss, idvar = "pid", edssvar = "edss", datevar = "date",
+#'              dxdate = "dx", relapses = rel_empty, relapseidvar = "pid")
+#' res3$info$N_pira  # 1
+#'
+#' # --- Mixed cohort: some PIRA, some RAW ---
+#' edss4 <- data.table(
+#'   pid = c(rep("A", 3), rep("B", 3)),
+#'   edss = c(2.0, 4.0, 4.0, 2.0, 4.0, 4.0),
+#'   date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01",
+#'                     "2010-01-01", "2010-07-01", "2011-07-01")),
+#'   dx = as.Date("2009-06-01")
+#' )
+#' rel4 <- data.table(
+#'   pid = "A",
+#'   relapse_date = as.Date("2010-06-01")  # only A has a relapse
+#' )
+#' res4 <- pira(edss4, idvar = "pid", edssvar = "edss", datevar = "date",
+#'              dxdate = "dx", relapses = rel4, relapseidvar = "pid")
+#' res4$info
+#' # N_cdp = 2, N_raw = 1 (A), N_pira = 1 (B)
+#'
+#' # --- Custom relapse window (30 days before, 60 days after) ---
+#' res5 <- pira(edss, idvar = "pid", edssvar = "edss", datevar = "date",
+#'              dxdate = "dx", relapses = rel2, relapseidvar = "pid",
+#'              windowbefore = 30L, windowafter = 60L)
+#' # With narrower window, the same relapse may no longer overlap the CDP
 #' @export
 pira <- function(dt, idvar, edssvar, datevar, dxdate, relapses,
                  relapseidvar = NULL, relapsedatevar = "relapse_date",

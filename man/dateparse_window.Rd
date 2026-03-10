@@ -11,19 +11,56 @@ dateparse_window(dt, indexvar, lookback = 0L, followup = 0L)
 
 \item{indexvar}{Name of the index date column (Date class).}
 
-\item{lookback}{Number of days to look back (non-negative).}
+\item{lookback}{Number of days to look back (non-negative integer).}
 
-\item{followup}{Number of days to follow up (non-negative).}
+\item{followup}{Number of days to follow up (non-negative integer).}
 }
 \value{
-A list with \verb{$data} (data.table with added window_start and/or
-window_end columns) and \verb{$info} containing lookback and followup values.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{The input data.table with \code{window_start} and
+\code{window_end} columns added (Date class).}
+\item{\verb{$info}}{A list with \code{lookback} and \code{followup} values.}
+}
 }
 \description{
 Creates start and end dates for a time window around each observation's
-index date. Returns a modified data.table with window variables added.
+index date. Adds \code{window_start} and \code{window_end} columns.
+}
+\details{
+Window behavior depends on which periods are specified:
+\itemize{
+\item Both lookback and followup: \code{window_start = index - lookback},
+\code{window_end = index + followup}
+\item Lookback only: \code{window_start = index - lookback},
+\code{window_end = index - 1} (day before index)
+\item Followup only: \code{window_start = index + 1} (day after index),
+\code{window_end = index + followup}
+}
 }
 \examples{
-dt <- data.table::data.table(id = 1:3, index = as.Date("2020-01-01"))
-dateparse_window(dt, "index", lookback = 365, followup = 180)
+library(data.table)
+
+# --- Both lookback and followup ---
+dt <- data.table(
+  pid = c("A", "B"),
+  index = as.Date(c("2020-01-01", "2020-06-15"))
+)
+res <- dateparse_window(dt, "index", lookback = 365, followup = 180)
+res$data
+#>    pid      index window_start window_end
+#> 1:   A 2020-01-01   2019-01-01 2020-06-29
+#> 2:   B 2020-06-15   2019-06-16 2020-12-12
+
+# --- Lookback only (pre-index period) ---
+res2 <- dateparse_window(dt, "index", lookback = 365)
+res2$data$window_end  # index - 1 day
+
+# --- Followup only (post-index period) ---
+res3 <- dateparse_window(dt, "index", followup = 180)
+res3$data$window_start  # index + 1 day
+}
+\seealso{
+\code{\link[=dateparse_inwindow]{dateparse_inwindow()}} for checking if dates fall within a window,
+\code{\link[=dateparse_filerange]{dateparse_filerange()}} for determining which year files to load
 }

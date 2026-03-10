@@ -7,35 +7,124 @@
 migrations(master, migfile, idvar = "id", startvar = "study_start")
 }
 \arguments{
-\item{master}{A data.frame or data.table of the study cohort.}
+\item{master}{A data.frame or data.table of the study cohort. Must contain
+at least the ID column and study start date column. Additional columns
+(e.g., age, sex) are preserved in the output.}
 
-\item{migfile}{A data.frame or data.table with migration data in wide format
-(columns: id, in_1, in_2, ..., out_1, out_2, ...).}
+\item{migfile}{A data.frame or data.table with migration data in wide format.
+Must contain: the ID column, and paired columns \code{out_1}, \code{in_1},
+\code{out_2}, \code{in_2}, etc. (Date class). Persons not in \code{migfile} are assumed
+to have no migration events (they remain in the cohort).}
 
 \item{idvar}{Name of the ID variable (default \code{"id"}).}
 
-\item{startvar}{Name of the study start date variable (default \code{"study_start"}).}
+\item{startvar}{Name of the study start date variable in \code{master}
+(default \code{"study_start"}).}
 }
 \value{
-A list with \verb{$data} (data.table of remaining cohort with
-\code{migration_out_dt} added for censoring) and \verb{$info} containing
-N_excluded_emigrated, N_excluded_inmigration, N_excluded_abroad,
-N_excluded_total, N_censored, N_final.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{A data.table of the remaining cohort after exclusions,
+with all original \code{master} columns preserved plus \code{migration_out_dt}
+(Date or NA). Non-NA values indicate the emigration censoring date.}
+\item{\verb{$info}}{A list with:
+\itemize{
+\item \code{N_excluded_emigrated} - Type 1 exclusions
+\item \code{N_excluded_inmigration} - Type 2 exclusions
+\item \code{N_excluded_abroad} - Type 3 exclusions
+\item \code{N_excluded_total} - Total excluded
+\item \code{N_censored} - Persons with emigration censoring dates
+\item \code{N_final} - Remaining cohort size
+}}
+}
 }
 \description{
 Handles exclusions and censoring based on Swedish migration registry data.
 Removes individuals who were not in Sweden at study baseline and computes
-emigration censoring dates.
+emigration censoring dates for those who leave during follow-up.
+}
+\details{
+The function applies three exclusion types (matching the Stata \code{migrations}
+command) and then computes censoring dates:
+
+\describe{
+\item{\strong{Type 1 - Emigrated before start}}{Person's last emigration is
+before \code{study_start} and they never returned (or returned before
+emigrating again). They were not in Sweden at baseline.}
+\item{\strong{Type 2 - Immigration only}}{Person's only migration record is an
+immigration after \code{study_start} with no prior emigration. They were
+not in the country at baseline.}
+\item{\strong{Type 3 - Abroad at baseline}}{Person emigrated before
+\code{study_start} and returned after \code{study_start}. They were abroad at
+baseline even though they eventually returned.}
+}
+
+After exclusions, any remaining person who emigrated during follow-up
+(after \code{study_start}) and did not return gets a \code{migration_out_dt}
+censoring date set to their emigration date.
+
+The migration file must be in wide format with paired columns: \code{out_1},
+\code{in_1}, \code{out_2}, \code{in_2}, etc. Each pair represents one migration episode.
+\verb{out_*} = emigration date, \verb{in_*} = immigration date. Use \code{NA} for
+missing dates.
 }
 \examples{
-master <- data.table::data.table(
+library(data.table)
+
+# --- Basic censoring: person A emigrates during follow-up ---
+master <- data.table(
   id = c("A", "B"),
-  study_start = as.Date(c("2010-01-01", "2010-01-01"))
+  study_start = as.Date(c("2010-01-01", "2010-01-01")),
+  age = c(45L, 62L)
 )
-migfile <- data.table::data.table(
+migfile <- data.table(
+  id = c("A"),
+  out_1 = as.Date("2015-06-15"),
+  in_1 = as.Date(NA),
+  out_2 = as.Date(NA),
+  in_2 = as.Date(NA)
+)
+res <- migrations(master, migfile)
+res$data
+#>    id study_start age migration_out_dt
+#> 1:  A  2010-01-01  45       2015-06-15
+#> 2:  B  2010-01-01  62             <NA>
+res$info$N_censored  # 1
+
+# --- Exclusion Type 1: emigrated before start, never returned ---
+migfile2 <- data.table(
   id = c("A", "B"),
-  out_1 = as.Date(c("2012-06-01", NA)),
-  in_1 = as.Date(c(NA, NA))
+  out_1 = as.Date(c("2005-01-01", "2008-01-01")),
+  in_1 = as.Date(c(NA, NA)),
+  out_2 = as.Date(c(NA, NA)),
+  in_2 = as.Date(c(NA, NA))
 )
-migrations(master, migfile)
+res2 <- migrations(master, migfile2)
+res2$info$N_excluded_emigrated  # 2
+nrow(res2$data)                 # 0
+
+# --- Exclusion Type 3: abroad at baseline ---
+migfile3 <- data.table(
+  id = "A",
+  out_1 = as.Date("2008-01-01"),   # emigrated before study start
+  in_1 = as.Date("2012-06-01"),    # returned after study start
+  out_2 = as.Date(NA),
+  in_2 = as.Date(NA)
+)
+res3 <- migrations(master, migfile3)
+res3$info$N_excluded_abroad  # 1 (person A was abroad at baseline)
+res3$info$N_final            # 1 (only person B remains)
+
+# --- No migration records: everyone stays ---
+migfile_empty <- data.table(
+  id = character(0), out_1 = as.Date(character(0)),
+  in_1 = as.Date(character(0)),
+  out_2 = as.Date(character(0)), in_2 = as.Date(character(0))
+)
+res4 <- migrations(master, migfile_empty)
+nrow(res4$data)  # 2 (both remain, no exclusions or censoring)
+}
+\seealso{
+\code{\link[=covarclose]{covarclose()}} for extracting covariates after cohort filtering,
+\code{\link[=cci_se]{cci_se()}} for comorbidity scoring
 }

@@ -17,42 +17,136 @@ cdp(
 )
 }
 \arguments{
-\item{dt}{A data.frame or data.table with EDSS measurements (long format).}
+\item{dt}{A data.frame or data.table with EDSS measurements (long format,
+one row per measurement).}
 
 \item{idvar}{Name of the person ID column.}
 
-\item{edssvar}{Name of the EDSS score column (numeric).}
+\item{edssvar}{Name of the EDSS score column (numeric, 0-10 scale).}
 
 \item{datevar}{Name of the measurement date column (Date class).}
 
-\item{dxdate}{Name of the diagnosis date column (Date class).}
+\item{dxdate}{Name of the diagnosis date column (Date class). Must be
+present in every row for each person.}
 
-\item{confirmdays}{Days required for confirmation (default 180).}
+\item{confirmdays}{Days required for confirmation (default 180). The minimum
+EDSS at >= this many days after the candidate event must still meet the
+progression threshold.}
 
-\item{baselinewindow}{Days from diagnosis to search for baseline EDSS (default 730).}
+\item{baselinewindow}{Days from diagnosis to search for baseline EDSS
+(default 730). The first EDSS within \verb{[dxdate, dxdate + baselinewindow]}
+is used.}
 
-\item{roving}{Logical; if TRUE, use roving baseline (reset after each confirmed
-progression). Default FALSE.}
+\item{roving}{Logical; if TRUE, use roving baseline (reset after each
+confirmed progression). Default FALSE.}
 
-\item{allevents}{Logical; if TRUE and roving=TRUE, track all CDP events not
-just first. Default FALSE.}
+\item{allevents}{Logical; if TRUE and \code{roving = TRUE}, track all CDP events
+(not just the first). Adds \code{event_num} column. Default FALSE.}
 }
 \value{
-A list with \verb{$data} (data.table with one row per person/event with
-\code{cdp_date}) and \verb{$info} containing N_persons, N_events, confirmdays,
-baselinewindow.
+A list with two elements:
+\describe{
+\item{\verb{$data}}{A data.table with one row per person (or per event if
+\code{allevents = TRUE}) containing the person ID and \code{cdp_date} (Date).
+If \code{allevents = TRUE}, also contains \code{event_num}. Returns zero rows
+if no confirmed progressions are found.}
+\item{\verb{$info}}{A list with: \code{N_persons}, \code{N_events}, \code{confirmdays},
+\code{baselinewindow}.}
+}
 }
 \description{
-Identifies confirmed disability progression events from EDSS measurements.
-Baseline EDSS is determined from the first measurement within a window of
-diagnosis. Progression requires a sustained increase above threshold.
+Identifies confirmed disability progression events from longitudinal EDSS
+measurements. Baseline EDSS is determined from the first measurement within
+a window after diagnosis. Progression requires a sustained increase above a
+threshold that depends on the baseline EDSS level.
+}
+\details{
+The CDP algorithm follows these steps:
+\enumerate{
+\item \strong{Baseline determination}: The first EDSS measurement within
+\code{baselinewindow} days of diagnosis is used. If no measurement exists
+in this window, the earliest available EDSS is used as fallback.
+\item \strong{Progression threshold}: If baseline EDSS <= 5.5, a 1.0-point
+increase is required. If baseline > 5.5, a 0.5-point increase suffices.
+\item \strong{Event detection}: The first EDSS after baseline that meets the
+threshold is identified as a candidate progression event.
+\item \strong{Confirmation}: The minimum EDSS at or after \code{confirmdays} days
+from the candidate event must also meet the threshold. If not, the
+event is rejected.
+}
+
+With \code{roving = TRUE}, after a confirmed CDP event, the baseline resets to the
+first EDSS measurement after the event date, and the algorithm repeats to
+detect subsequent progressions. Use \code{allevents = TRUE} to capture all such
+events (adds an \code{event_num} column).
 }
 \examples{
-edss <- data.table::data.table(
+library(data.table)
+
+# --- Basic CDP: single patient with confirmed progression ---
+edss <- data.table(
   pid = rep("A", 4),
   edss = c(2.0, 3.5, 3.5, 3.5),
   date = as.Date(c("2010-01-01", "2011-06-01", "2011-09-01", "2012-01-01")),
   dx = as.Date("2009-06-01")
 )
-cdp(edss, idvar = "pid", edssvar = "edss", datevar = "date", dxdate = "dx")
+res <- cdp(edss, idvar = "pid", edssvar = "edss",
+           datevar = "date", dxdate = "dx")
+res$data
+#>    pid   cdp_date
+#> 1:   A 2011-06-01
+
+# --- Unconfirmed progression (drops back below threshold) ---
+edss2 <- data.table(
+  pid = rep("A", 4),
+  edss = c(2.0, 4.0, 2.5, 2.0),
+  date = as.Date(c("2010-01-01", "2010-07-01", "2011-02-01", "2011-07-01")),
+  dx = as.Date("2008-06-01")
+)
+res2 <- cdp(edss2, idvar = "pid", edssvar = "edss",
+            datevar = "date", dxdate = "dx")
+nrow(res2$data)  # 0 - progression not confirmed
+
+# --- High baseline (> 5.5): threshold changes to 0.5 ---
+edss3 <- data.table(
+  pid = rep("A", 3),
+  edss = c(6.0, 6.5, 6.5),
+  date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01")),
+  dx = as.Date("2009-06-01")
+)
+res3 <- cdp(edss3, idvar = "pid", edssvar = "edss",
+            datevar = "date", dxdate = "dx")
+res3$data$cdp_date  # 2010-07-01 (6.5 >= 6.0 + 0.5)
+
+# --- Roving baseline with multiple events ---
+edss4 <- data.table(
+  pid = rep("A", 6),
+  edss = c(2.0, 3.5, 3.5, 5.0, 5.0, 5.5),
+  date = as.Date(c("2010-01-01", "2010-07-01", "2011-01-01",
+                    "2011-07-01", "2012-01-01", "2012-07-01")),
+  dx = as.Date("2009-06-01")
+)
+res4 <- cdp(edss4, idvar = "pid", edssvar = "edss",
+            datevar = "date", dxdate = "dx",
+            roving = TRUE, allevents = TRUE)
+res4$data
+# Multiple events with event_num column
+
+# --- Multiple patients ---
+edss5 <- data.table(
+  pid = c(rep("A", 3), rep("B", 3)),
+  edss = c(2.0, 4.0, 4.0,    # A: confirmed
+           3.0, 3.5, 3.0),    # B: not enough increase
+  date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01",
+                    "2010-01-01", "2010-07-01", "2011-07-01")),
+  dx = as.Date("2009-06-01")
+)
+res5 <- cdp(edss5, idvar = "pid", edssvar = "edss",
+            datevar = "date", dxdate = "dx")
+res5$data      # Only patient A
+res5$info      # N_persons = 1, N_events = 1
+}
+\seealso{
+\code{\link[=pira]{pira()}} for classifying CDP events as PIRA or RAW,
+\code{\link[=sustainedss]{sustainedss()}} for sustained threshold crossing
 }
