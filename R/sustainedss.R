@@ -1,0 +1,132 @@
+#' Compute sustained EDSS progression date
+#'
+#' Iterative algorithm that identifies the first date when EDSS reaches a
+#' threshold and is sustained throughout a confirmation window. Events that
+#' are not confirmed as sustained are rejected and the search repeats.
+#'
+#' @param dt A data.frame or data.table with EDSS measurements.
+#' @param idvar Name of the person ID column.
+#' @param edssvar Name of the EDSS score column (numeric).
+#' @param datevar Name of the date column (Date class).
+#' @param threshold EDSS threshold value (must be positive).
+#' @param confirmwindow Days for confirmation window (default 182).
+#' @param baselinethreshold Minimum EDSS to require in confirmation window.
+#'   Defaults to threshold value.
+#' @return A list with `$data` (data.table with one row per person with a
+#'   sustained event, containing idvar and `sustained_dt`) and `$info`
+#'   containing N_events, iterations, threshold, confirmwindow.
+#' @examples
+#' edss <- data.table::data.table(
+#'   pid = rep("A", 4),
+#'   edss = c(2.0, 3.5, 3.5, 4.0),
+#'   date = as.Date(c("2010-01-01", "2011-06-01", "2011-09-01", "2012-01-01"))
+#' )
+#' sustainedss(edss, idvar = "pid", edssvar = "edss", datevar = "date",
+#'             threshold = 3.0)
+#' @export
+sustainedss <- function(dt, idvar, edssvar, datevar, threshold,
+                        confirmwindow = 182L, baselinethreshold = NULL) {
+  if (threshold <= 0) stop("threshold must be positive", call. = FALSE)
+  if (is.null(baselinethreshold)) baselinethreshold <- threshold
+
+  dt <- data.table::as.data.table(data.table::copy(dt))
+
+  for (v in c(idvar, edssvar, datevar)) {
+    if (!v %in% names(dt)) stop(sprintf("Variable '%s' not found", v), call. = FALSE)
+  }
+
+  # Standardize column names
+  work <- dt[, c(idvar, edssvar, datevar), with = FALSE]
+  data.table::setnames(work, c(idvar, edssvar, datevar), c("ss_id_", "ss_edss_", "ss_date_"))
+
+  work <- work[!is.na(work$ss_edss_) & !is.na(work$ss_date_)]
+  if (nrow(work) == 0) stop("No valid observations after dropping missing values", call. = FALSE)
+
+  date_is_Date <- inherits(work$ss_date_, "Date")
+  if (date_is_Date) {
+    work[, ss_date_ := as.numeric(ss_date_)]
+  }
+
+  work[, ss_edss_work_ := ss_edss_]
+  data.table::setorder(work, ss_id_, ss_date_, ss_edss_)
+  work[, ss_obs_id_ := seq_len(.N)]
+
+  keep_going <- TRUE
+  iteration <- 1L
+  max_iterations <- 1000L
+
+  while (keep_going) {
+    if (iteration > max_iterations) {
+      warning(sprintf("sustainedss reached %d iterations without converging", max_iterations))
+      break
+    }
+
+    work[, ss_first_dt_ := suppressWarnings(
+      min(ifelse(ss_edss_work_ >= threshold, ss_date_, NA), na.rm = TRUE)
+    ), by = ss_id_]
+    .inf_to_na(work, "ss_first_dt_")
+
+    work[, ss_in_confirm_ := !is.na(ss_first_dt_) & ss_date_ > ss_first_dt_ & ss_date_ <= ss_first_dt_ + confirmwindow]
+
+    work[, ss_lowest_ := suppressWarnings(
+      min(ifelse(ss_in_confirm_, ss_edss_work_, NA), na.rm = TRUE)
+    ), by = ss_id_]
+    .inf_to_na(work, "ss_lowest_")
+
+    work[, ss_lastdt_ := suppressWarnings(
+      max(ifelse(ss_in_confirm_, ss_date_, NA), na.rm = TRUE)
+    ), by = ss_id_]
+    .inf_to_na(work, "ss_lastdt_")
+
+    # Use min() for conservative handling of same-date duplicates (matches Stata)
+    work[, ss_last_val_ := suppressWarnings(
+      min(ifelse(ss_date_ == ss_lastdt_ & !is.na(ss_lastdt_), ss_edss_work_, NA), na.rm = TRUE)
+    ), by = ss_id_]
+    .inf_to_na(work, "ss_last_val_")
+
+    work[, ss_not_sust_ := !is.na(ss_lowest_) &
+           ss_lowest_ < baselinethreshold &
+           !is.na(ss_last_val_) &
+           ss_last_val_ < threshold]
+
+    rejected <- work[work$ss_date_ == work$ss_first_dt_ & work$ss_not_sust_ == TRUE]
+    n_rejected <- nrow(rejected)
+
+    if (n_rejected == 0) {
+      keep_going <- FALSE
+    } else {
+      update_ids <- rejected$ss_obs_id_
+      update_vals <- rejected$ss_last_val_
+      work[work$ss_obs_id_ %in% update_ids,
+           ss_edss_work_ := update_vals[match(ss_obs_id_, update_ids)]]
+      iteration <- iteration + 1L
+    }
+
+    work[, c("ss_first_dt_", "ss_in_confirm_", "ss_lowest_", "ss_lastdt_",
+             "ss_last_val_", "ss_not_sust_") := NULL]
+  }
+
+  work[, ss_sustained_dt_ := suppressWarnings(
+    min(ifelse(ss_edss_work_ >= threshold, ss_date_, NA), na.rm = TRUE)
+  ), by = ss_id_]
+  .inf_to_na(work, "ss_sustained_dt_")
+
+  result <- unique(work[!is.na(work$ss_sustained_dt_), .(ss_id_, ss_sustained_dt_)])
+  data.table::setnames(result, c("ss_id_", "ss_sustained_dt_"), c(idvar, "sustained_dt"))
+
+  if (date_is_Date && nrow(result) > 0) {
+    result[, sustained_dt := as.Date(sustained_dt, origin = "1970-01-01")]
+  }
+
+  n_events <- nrow(result)
+
+  list(
+    data = result,
+    info = list(
+      N_events = n_events,
+      iterations = iteration,
+      threshold = threshold,
+      confirmwindow = confirmwindow
+    )
+  )
+}
