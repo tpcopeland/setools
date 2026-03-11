@@ -849,3 +849,347 @@ test_that("procmatch_first finds earliest date per person", {
   expect_equal(a_rows$proc_ever[1], 1L)
   expect_equal(b_rows$proc_ever[1], 0L)
 })
+
+# =============================================================================
+# MIGRATIONS: Divergence tests (R improvements over Stata)
+# =============================================================================
+# The following tests document cases where R and Stata diverge.
+# Analysis confirmed R is MORE correct in both cases.
+
+test_that("migrations Type 2 edge: person with both emigration AND immigration is NOT excluded", {
+  # Scenario: Person emigrated at 2012, returned at 2013 (single migration episode).
+  # They WERE in Sweden at baseline (2010). Should NOT be Type 2 excluded.
+
+  # Stata bug: Type 2 check only requires `in_ > startvar & total_migrations == 1`
+  # and does NOT check is.na(out_). So Stata would wrongly exclude this person.
+  # R correctly adds `is.na(out_)` check, preventing the wrong exclusion.
+  master <- data.table(
+    id = c("A", "B"),
+    study_start = as.Date(c("2010-01-01", "2010-01-01"))
+  )
+  migfile <- data.table(
+    id = "A",
+    out_1 = as.Date("2012-06-01"),
+    in_1 = as.Date("2013-01-01"),
+    out_2 = as.Date(NA),
+    in_2 = as.Date(NA)
+  )
+  res <- migrations(master, migfile)
+  # Person A was in Sweden at baseline -> should NOT be excluded
+  expect_equal(res$info$N_excluded_inmigration, 0L,
+               info = "Person with emigration+return should NOT be Type 2 excluded (Stata would incorrectly exclude)")
+  expect_equal(nrow(res$data), 2L)
+  expect_true("A" %in% res$data$id)
+})
+
+test_that("migrations censoring: only permanent emigrations generate censoring dates", {
+  # Scenario: Person emigrated at 2012, returned at 2013, then emigrated permanently at 2015.
+  # R correctly censors at 2015 (permanent departure).
+  # Stata censors at 2012 (first emigration, even though person returned).
+  master <- data.table(
+    id = "A",
+    study_start = as.Date("2010-01-01")
+  )
+  migfile <- data.table(
+    id = "A",
+    out_1 = as.Date("2012-01-01"),
+    in_1 = as.Date("2013-01-01"),
+    out_2 = as.Date("2015-01-01"),
+    in_2 = as.Date(NA)
+  )
+  res <- migrations(master, migfile)
+  expect_equal(res$data$migration_out_dt, as.Date("2015-01-01"),
+               info = "Censoring should be at permanent emigration (2015), not temporary one (2012)")
+  expect_equal(res$info$N_censored, 1L)
+})
+
+test_that("migrations censoring: emigration with return produces no censoring date", {
+  # Person emigrated and returned. No permanent departure -> no censoring.
+  master <- data.table(
+    id = "A",
+    study_start = as.Date("2010-01-01")
+  )
+  migfile <- data.table(
+    id = "A",
+    out_1 = as.Date("2012-01-01"),
+    in_1 = as.Date("2013-01-01"),
+    out_2 = as.Date(NA),
+    in_2 = as.Date(NA)
+  )
+  res <- migrations(master, migfile)
+  expect_true(is.na(res$data$migration_out_dt),
+              info = "Person who emigrated and returned should have no censoring date")
+  expect_equal(res$info$N_censored, 0L)
+})
+
+test_that("migrations: pre-study round trip does not affect censoring", {
+  # Person emigrated at 2005, returned at 2007 (before study start 2010).
+  # Then emigrated again at 2015 permanently.
+  # Only the 2015 emigration should generate censoring.
+  master <- data.table(
+    id = "A",
+    study_start = as.Date("2010-01-01")
+  )
+  migfile <- data.table(
+    id = "A",
+    out_1 = as.Date("2005-01-01"),
+    in_1 = as.Date("2007-01-01"),
+    out_2 = as.Date("2015-01-01"),
+    in_2 = as.Date(NA)
+  )
+  res <- migrations(master, migfile)
+  expect_equal(res$info$N_excluded_total, 0L)
+  expect_equal(res$data$migration_out_dt, as.Date("2015-01-01"))
+})
+
+test_that("migrations: multiple temporary emigrations produce correct censoring", {
+  # Person emigrates temporarily twice, then permanently once.
+  # Only the permanent emigration should censor.
+  master <- data.table(
+    id = "A",
+    study_start = as.Date("2010-01-01")
+  )
+  migfile <- data.table(
+    id = "A",
+    out_1 = as.Date("2011-01-01"),
+    in_1 = as.Date("2011-06-01"),
+    out_2 = as.Date("2013-01-01"),
+    in_2 = as.Date("2013-06-01")
+  )
+  # Person left and returned twice. No permanent emigration.
+  res <- migrations(master, migfile)
+  expect_true(is.na(res$data$migration_out_dt),
+              info = "Two temporary emigrations (both returned) -> no censoring")
+  expect_equal(res$info$N_censored, 0L)
+})
+
+# =============================================================================
+# SUSTAINEDSS: Additional edge cases for Stata matching
+# =============================================================================
+
+test_that("sustainedss baselinethreshold parameter works like Stata basethreshold", {
+  # When baselinethreshold differs from threshold, the rejection logic uses
+  # baselinethreshold for the min-check but threshold for the last-value check.
+  # Stata: not_sust = (lowest < basethreshold & last_window < threshold)
+  dt <- data.table(
+    id = rep("P1", 4),
+    edss = c(2.0, 4.5, 3.5, 4.0),
+    date = as.Date(c("2010-01-01", "2010-06-01", "2010-09-01", "2010-12-01"))
+  )
+  # threshold=4.0, baselinethreshold=3.0
+  # Event at 2010-06-01 (4.5 >= 4.0)
+  # Window: 2010-06-01 to 2010-12-01
+  # lowest in window = min(3.5, 4.0) = 3.5 >= baselinethreshold(3.0) -> NOT rejected
+  # (even though 3.5 < threshold 4.0, the baseline check is 3.5 >= 3.0 -> passes)
+  res <- sustainedss(dt, idvar = "id", edssvar = "edss", datevar = "date",
+                     threshold = 4.0, baselinethreshold = 3.0)
+  expect_equal(nrow(res$data), 1L)
+  expect_equal(res$data$sustained_dt, as.Date("2010-06-01"),
+               info = "baselinethreshold=3.0 should keep event (lowest=3.5 >= 3.0)")
+})
+
+test_that("sustainedss with default baselinethreshold: event rejected when window drops below", {
+  # Same data as baselinethreshold=3.0 test above, but default baselinethreshold=4.0.
+  # Shows the effect of the baselinethreshold parameter.
+  # 2010-12-01 is 183 days from 2010-06-01 -> OUTSIDE 182-day window.
+  # Only 2010-09-01 (3.5) is in window.
+  # lowest=3.5 < baselinethreshold(4.0) AND last_val=3.5 < threshold(4.0) -> REJECTED
+  # After rejection, EDSS at 2010-06-01 replaced with 3.5. Next crossing at 2010-12-01.
+  dt <- data.table(
+    id = rep("P1", 4),
+    edss = c(2.0, 4.5, 3.5, 4.0),
+    date = as.Date(c("2010-01-01", "2010-06-01", "2010-09-01", "2010-12-01"))
+  )
+  res <- sustainedss(dt, idvar = "id", edssvar = "edss", datevar = "date",
+                     threshold = 4.0)
+  # With default baselinethreshold=4.0: event rejected, sustained at 2010-12-01
+  expect_equal(nrow(res$data), 1L)
+  expect_equal(res$data$sustained_dt, as.Date("2010-12-01"))
+  expect_true(res$info$iterations >= 2L,
+              info = "Should require at least 2 iterations (one rejection cycle)")
+})
+
+test_that("sustainedss AND-based rejection: both conditions required", {
+  # The rejection logic uses AND: not_sustained = (lowest < basethreshold) AND (last < threshold)
+  # This means rejection only happens when BOTH conditions are true.
+  # Test case where lowest < basethreshold but last >= threshold -> NOT rejected
+  dt <- data.table(
+    id = rep("P1", 5),
+    edss = c(2.0, 4.5, 3.0, 2.5, 4.5),
+    date = as.Date(c("2010-01-01", "2010-06-01", "2010-08-01",
+                      "2010-09-01", "2010-11-30"))
+  )
+  # 2010-11-30 is exactly 182 days from 2010-06-01 -> INSIDE window
+  res <- sustainedss(dt, idvar = "id", edssvar = "edss", datevar = "date",
+                     threshold = 4.0)
+  # Event at 2010-06-01. Window: (06-01, 11-30].
+  # Observations in window: 3.0 (08-01), 2.5 (09-01), 4.5 (11-30)
+  # lowest = 2.5 < 4.0 (basethreshold) -> first condition TRUE
+  # lastdt = 2010-11-30, last_val = 4.5 >= 4.0 -> second condition FALSE
+  # NOT rejected (AND logic). Sustained at 2010-06-01.
+  expect_equal(res$data$sustained_dt, as.Date("2010-06-01"),
+               info = "AND rejection: low minimum but high last value -> NOT rejected")
+})
+
+# =============================================================================
+# CDP: Additional Stata-matching edge cases
+# =============================================================================
+
+test_that("cdp confirmation exactly at confirmdays boundary", {
+  # Confirmation must be at >= confirmdays (180) after candidate event.
+  # Test that measurement exactly at 180 days counts.
+  # 2010-07-01 + 180 = 2010-12-28
+  dt <- data.table(
+    id = rep("P1", 3),
+    edss = c(2.0, 4.0, 4.0),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2010-12-28")),
+    dx = as.Date("2009-06-01")
+  )
+  res <- cdp(dt, idvar = "id", edssvar = "edss", datevar = "date",
+             dxdate = "dx", confirmdays = 180)
+  # 4.0 at exactly 180 days after event should confirm (>= boundary)
+  expect_equal(nrow(res$data), 1L,
+               info = "Measurement exactly at confirmdays boundary should confirm (matches Stata >=)")
+  expect_equal(res$data$cdp_date, as.Date("2010-07-01"))
+})
+
+test_that("cdp confirmation 1 day before confirmdays does NOT confirm", {
+  # 2010-07-01 + 179 = 2010-12-27
+  dt <- data.table(
+    id = rep("P1", 3),
+    edss = c(2.0, 4.0, 4.0),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2010-12-27")),
+    dx = as.Date("2009-06-01")
+  )
+  res <- cdp(dt, idvar = "id", edssvar = "edss", datevar = "date",
+             dxdate = "dx", confirmdays = 180)
+  # Only measurement for confirmation is at 179 days (< 180) -> NOT confirmed
+  expect_equal(nrow(res$data), 0L,
+               info = "Measurement 1 day before confirmdays boundary should NOT confirm")
+})
+
+test_that("cdp baseline at exactly 5.5 uses 1.0 threshold (not 0.5)", {
+  # Stata: if bl <= 5.5 -> threshold 1.0; if bl > 5.5 -> threshold 0.5
+  # At exactly 5.5, should use 1.0
+  dt <- data.table(
+    id = rep("P1", 3),
+    edss = c(5.5, 6.0, 6.0),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01")),
+    dx = as.Date("2009-06-01")
+  )
+  res <- cdp(dt, idvar = "id", edssvar = "edss", datevar = "date",
+             dxdate = "dx")
+  # Baseline=5.5, threshold=1.0. Need >= 6.5 for progression.
+  # 6.0 < 6.5 -> NO progression
+  expect_equal(nrow(res$data), 0L,
+               info = "Baseline exactly 5.5 should use 1.0 threshold (matches Stata <=)")
+})
+
+test_that("cdp baseline at 5.5 + epsilon uses 0.5 threshold", {
+  dt <- data.table(
+    id = rep("P1", 3),
+    edss = c(6.0, 6.5, 6.5),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01")),
+    dx = as.Date("2009-06-01")
+  )
+  res <- cdp(dt, idvar = "id", edssvar = "edss", datevar = "date",
+             dxdate = "dx")
+  # Baseline=6.0 (> 5.5), threshold=0.5. Need >= 6.5.
+  # 6.5 >= 6.5 -> progression, confirmed by 6.5 at 2011-07-01
+  expect_equal(nrow(res$data), 1L)
+  expect_equal(res$data$cdp_date, as.Date("2010-07-01"),
+               info = "Baseline > 5.5 should use 0.5 threshold")
+})
+
+# =============================================================================
+# PIRA: Relapse rebaseline cross-validation
+# =============================================================================
+
+test_that("pira rebaselinerelapse resets baseline after last relapse", {
+  # With rebaselinerelapse=TRUE, baseline EDSS resets to first measurement
+  # >= 30 days after the last relapse date.
+  dt <- data.table(
+    id = rep("P1", 5),
+    edss = c(2.0, 3.0, 3.0, 4.0, 4.0),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2011-01-01",
+                      "2011-07-01", "2012-07-01")),
+    dx = as.Date("2009-06-01")
+  )
+  # Relapse at 2010-08-01. Window = [2010-05-03, 2010-08-31].
+  # CDP at 2010-07-01 is IN this window -> RAW (without rebaseline)
+  rel <- data.table(
+    id = "P1",
+    relapse_date = as.Date("2010-08-01")
+  )
+  # Without rebaseline: baseline=2.0, threshold=1.0, need >= 3.0.
+  # First prog at 2010-07-01 (3.0). Confirm: min at >= 2010-12-28.
+  # EDSS: 3.0 (2011-01-01), 4.0 (2011-07-01), 4.0 (2012-07-01). min=3.0 >= 3.0 -> CONFIRMED.
+  # CDP at 2010-07-01 is within relapse window -> RAW.
+  res_no_rebl <- pira(dt, idvar = "id", edssvar = "edss", datevar = "date",
+                       dxdate = "dx", relapses = rel,
+                       rebaselinerelapse = FALSE)
+
+  # With rebaseline: relapse at 2010-08-01. First EDSS >= 30 days after = 2010-08-31.
+  # First qualifying: 2011-01-01 (3.0). New baseline = 3.0. Threshold=1.0. Need >= 4.0.
+  # First prog: 4.0 at 2011-07-01. Confirmed: 4.0 at 2012-07-01 >= 4.0 -> confirmed.
+  # CDP at 2011-07-01 is OUTSIDE relapse window [2010-05-03, 2010-08-31] -> PIRA.
+  res_rebl <- pira(dt, idvar = "id", edssvar = "edss", datevar = "date",
+                    dxdate = "dx", relapses = rel,
+                    rebaselinerelapse = TRUE)
+
+  # Both should find a CDP
+  expect_equal(res_no_rebl$info$N_cdp, 1L)
+  expect_equal(res_rebl$info$N_cdp, 1L)
+  # Without rebaseline: CDP at 2010-07-01 (within relapse window -> RAW)
+  expect_equal(res_no_rebl$info$N_raw, 1L,
+               info = "Without rebaseline: CDP within relapse window -> RAW")
+  # With rebaseline: CDP at 2011-07-01 (outside relapse window -> PIRA)
+  expect_equal(res_rebl$info$N_pira, 1L,
+               info = "With rebaseline: CDP shifts outside relapse window -> PIRA")
+})
+
+test_that("pira windowafter boundary: exactly at windowafter days = RAW", {
+  dt <- data.table(
+    id = rep("P1", 3),
+    edss = c(2.0, 4.0, 4.0),
+    date = as.Date(c("2010-01-01", "2010-07-01", "2011-07-01")),
+    dx = as.Date("2009-06-01")
+  )
+  # CDP at 2010-07-01. Relapse exactly 30 days before CDP:
+  # Window: [relapse - 90, relapse + 30]
+  # Relapse at 2010-07-31 means window = [2010-05-02, 2010-08-30]
+  # CDP at 2010-07-01 is within [2010-05-02, 2010-08-30] -> RAW
+  # Actually I want to test windowafter boundary. Put relapse BEFORE CDP:
+  # relapse at 2010-06-01, window = [2010-03-03, 2010-07-01]
+  # CDP at 2010-07-01 = exactly relapse + 30 -> inside window (inclusive)
+  rel <- data.table(
+    id = "P1",
+    relapse_date = as.Date("2010-06-01")  # exactly 30 days before CDP
+  )
+  res <- pira(dt, idvar = "id", edssvar = "edss", datevar = "date",
+              dxdate = "dx", relapses = rel,
+              windowbefore = 90L, windowafter = 30L)
+  # CDP at 2010-07-01 = relapse_date (2010-06-01) + 30 days
+  # Stata inrange() is inclusive: cdp_date <= relapse_date + windowafter
+  expect_equal(res$info$N_raw, 1L,
+               info = "CDP exactly at windowafter boundary should be RAW (inclusive, matches Stata)")
+})
+
+# =============================================================================
+# DATEPARSE: Edge case cross-validation
+# =============================================================================
+
+test_that("dateparse_filerange matches Stata dateparse filerange", {
+  # dateparse_filerange computes year ranges for file loading
+  res <- dateparse_filerange(as.Date("2010-03-15"), as.Date("2015-09-20"))
+  expect_equal(res$index_start_year, 2010L)
+  expect_equal(res$index_end_year, 2015L)
+  expect_equal(res$file_start_year, 2010L)
+  expect_equal(res$file_end_year, 2015L)
+
+  # With lookback/followup: file range extends beyond index range
+  res2 <- dateparse_filerange(as.Date("2010-03-15"), as.Date("2015-09-20"),
+                               lookback = 365, followup = 365)
+  expect_equal(res2$file_start_year, 2009L)
+  expect_equal(res2$file_end_year, 2016L)
+})
