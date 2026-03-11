@@ -155,7 +155,7 @@ cdp <- function(dt, idvar, edssvar, datevar, dxdate,
     result <- .cdp_roving_run(work, confirmdays, baselinewindow, allevents)
   }
 
-  if (date_is_Date && nrow(result) > 0) {
+  if (date_is_Date) {
     result[, cdp_date := as.Date(cdp_date, origin = "1970-01-01")]
   }
 

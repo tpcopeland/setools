@@ -79,10 +79,10 @@ The algorithm proceeds in three steps:
 \enumerate{
 \item \strong{CDP detection}: Runs the standard CDP algorithm (see \code{\link[=cdp]{cdp()}}) to
 identify confirmed progression events from EDSS measurements.
-\item \strong{Relapse window check}: For each CDP event, checks whether any
-relapse falls within the window
-\verb{[cdp_date - windowbefore, cdp_date + windowafter]}. Uses inclusive
-boundaries (matching Stata \code{inrange()}).
+\item \strong{Relapse window check}: For each CDP event, checks whether the
+event falls within any relapse window
+\verb{[relapse_date - windowbefore, relapse_date + windowafter]}. Uses
+inclusive boundaries (matching Stata \code{inrange()}).
 \item \strong{Classification}: Events outside all relapse windows are classified
 as PIRA. Events inside at least one relapse window are classified as RAW.
 }

@@ -129,11 +129,10 @@
 #' # Both income and education come from the same closest observation
 #' @export
 covarclose <- function(master, using, idvar, indexdate, datevar, vars,
-                       prefer = "closest", yearformat = FALSE,
+                       prefer = c("closest", "before", "after"),
+                       yearformat = FALSE,
                        impute = FALSE, missing_codes = NULL) {
-  if (!prefer %in% c("before", "after", "closest")) {
-    stop("prefer must be: before, after, or closest", call. = FALSE)
-  }
+  prefer <- match.arg(prefer)
 
   master <- data.table::as.data.table(data.table::copy(master))
   using <- data.table::as.data.table(data.table::copy(using))
@@ -182,10 +181,10 @@ covarclose <- function(master, using, idvar, indexdate, datevar, vars,
       }
       # Forward fill within person
       data.table::setorderv(covar, c(idvar, ".covar_date"))
-      covar[, (v) := nafill_locf(get(v)), by = idvar]
+      covar[, (v) := .nafill_locf(get(v)), by = idvar]
       # Backward fill within person
       data.table::setorderv(covar, c(idvar, ".covar_date"), order = c(1L, -1L))
-      covar[, (v) := nafill_locf(get(v)), by = idvar]
+      covar[, (v) := .nafill_locf(get(v)), by = idvar]
       data.table::setorderv(covar, c(idvar, ".covar_date"))
     }
   }
@@ -226,7 +225,7 @@ covarclose <- function(master, using, idvar, indexdate, datevar, vars,
 }
 
 # Internal: LOCF (last observation carried forward) for a vector
-nafill_locf <- function(x) {
+.nafill_locf <- function(x) {
   if (all(is.na(x))) return(x)
   idx <- which(!is.na(x))
   if (length(idx) == 0) return(x)

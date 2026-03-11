@@ -9,7 +9,7 @@ cci_se(
   id,
   icd,
   date,
-  dateformat = "stata",
+  dateformat = c("stata", "yyyymmdd", "ymd"),
   components = FALSE,
   prefix = "cci_"
 )

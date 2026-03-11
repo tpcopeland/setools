@@ -125,9 +125,15 @@ migrations <- function(master, migfile, idvar = "id", startvar = "study_start") 
   if (!"in_1" %in% names(migfile)) stop("Variable 'in_1' not found in migration file", call. = FALSE)
   if (!"out_1" %in% names(migfile)) stop("Variable 'out_1' not found in migration file", call. = FALSE)
 
-  # Identify in_/out_ columns
+  # Identify in_/out_ columns, sorted numerically for correct melt pairing
   in_cols <- grep("^in_[0-9]+$", names(migfile), value = TRUE)
   out_cols <- grep("^out_[0-9]+$", names(migfile), value = TRUE)
+  in_cols <- in_cols[order(as.integer(gsub("^in_", "", in_cols)))]
+  out_cols <- out_cols[order(as.integer(gsub("^out_", "", out_cols)))]
+
+  if (length(out_cols) != length(in_cols)) {
+    stop("Migration file must have matching pairs of out_N and in_N columns", call. = FALSE)
+  }
 
   # Merge: keep only cohort members present in migration file
   mig <- merge(migfile[, c(idvar, in_cols, out_cols), with = FALSE],
@@ -154,8 +160,8 @@ migrations <- function(master, migfile, idvar = "id", startvar = "study_start") 
   # Calculate last emigration and immigration per person
   sv <- startvar  # local copy for get() scoping
   iv <- idvar
-  mig_long[, last_out := max(out_, na.rm = TRUE), by = iv]
-  mig_long[, last_in  := max(in_, na.rm = TRUE), by = iv]
+  mig_long[, last_out := suppressWarnings(max(out_, na.rm = TRUE)), by = iv]
+  mig_long[, last_in  := suppressWarnings(max(in_, na.rm = TRUE)), by = iv]
   .inf_to_na(mig_long, "last_out")
   .inf_to_na(mig_long, "last_in")
 

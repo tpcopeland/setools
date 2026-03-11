@@ -11,7 +11,7 @@ covarclose(
   indexdate,
   datevar,
   vars,
-  prefer = "closest",
+  prefer = c("closest", "before", "after"),
   yearformat = FALSE,
   impute = FALSE,
   missing_codes = NULL

@@ -10,10 +10,10 @@
 #' \enumerate{
 #'   \item **CDP detection**: Runs the standard CDP algorithm (see [cdp()]) to
 #'     identify confirmed progression events from EDSS measurements.
-#'   \item **Relapse window check**: For each CDP event, checks whether any
-#'     relapse falls within the window
-#'     `[cdp_date - windowbefore, cdp_date + windowafter]`. Uses inclusive
-#'     boundaries (matching Stata `inrange()`).
+#'   \item **Relapse window check**: For each CDP event, checks whether the
+#'     event falls within any relapse window
+#'     `[relapse_date - windowbefore, relapse_date + windowafter]`. Uses
+#'     inclusive boundaries (matching Stata `inrange()`).
 #'   \item **Classification**: Events outside all relapse windows are classified
 #'     as PIRA. Events inside at least one relapse window are classified as RAW.
 #' }
@@ -223,7 +223,9 @@ pira <- function(dt, idvar, edssvar, datevar, dxdate, relapses,
   n_cdp <- nrow(cdp_events)
 
   if (n_cdp == 0) {
-    r <- data.table::data.table(x_ = character(0), pira_date = numeric(0), raw_date = numeric(0))
+    r <- data.table::data.table(x_ = character(0),
+                                pira_date = as.Date(character(0)),
+                                raw_date = as.Date(character(0)))
     data.table::setnames(r, "x_", idvar)
     return(list(
       data = r,

@@ -111,12 +111,9 @@
 #' res4$info
 #' # N_patients = 4, N_any = 4, mean_cci, max_cci
 #' @export
-cci_se <- function(dt, id, icd, date, dateformat = "stata",
+cci_se <- function(dt, id, icd, date, dateformat = c("stata", "yyyymmdd", "ymd"),
                    components = FALSE, prefix = "cci_") {
-  dateformat <- tolower(dateformat)
-  if (!dateformat %in% c("stata", "yyyymmdd", "ymd")) {
-    stop("dateformat must be: stata, yyyymmdd, or ymd", call. = FALSE)
-  }
+  dateformat <- match.arg(dateformat)
 
   dt <- data.table::as.data.table(data.table::copy(dt))
 

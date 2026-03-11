@@ -14,7 +14,7 @@
 
 ```r
 # install.packages("remotes")
-remotes::install_github("tpcopeland/setools")
+remotes::install_github("tpcopeland/R-Packages", subdir = "setools")
 ```
 
 ## Overview

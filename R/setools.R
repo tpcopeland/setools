@@ -1,5 +1,6 @@
 #' @keywords internal
 #' @import data.table
+#' @importFrom utils packageVersion
 "_PACKAGE"
 
 #' Display setools package information
@@ -7,9 +8,8 @@
 #' Lists available commands grouped by category, similar to the Stata
 #' `setools` command.
 #'
-#' @param category Filter by category: "all" (default), "dates", "codes",
-#'   "migration", or "ms".
-#' @param detail Logical; if TRUE, show detailed function signatures.
+#' @param category Filter by category: `"all"` (default), `"dates"`, `"codes"`,
+#'   `"migration"`, or `"ms"`. Partial matching is supported.
 #' @return Invisibly returns a data.frame of commands with name, category,
 #'   and description.
 #' @examples
@@ -18,7 +18,9 @@
 #' setools("ms")
 #' }
 #' @export
-setools <- function(category = "all", detail = FALSE) {
+setools <- function(category = c("all", "dates", "codes", "migration", "ms")) {
+  category <- match.arg(category)
+
   cmds <- data.frame(
     name = c("dateparse_parse", "dateparse_window", "dateparse_validate",
              "dateparse_inwindow", "dateparse_filerange",
@@ -48,10 +50,6 @@ setools <- function(category = "all", detail = FALSE) {
   )
 
   if (category != "all") {
-    category <- tolower(category)
-    if (!category %in% unique(cmds$category)) {
-      stop(sprintf("Unknown category: %s. Valid: all, dates, codes, migration, ms", category), call. = FALSE)
-    }
     cmds <- cmds[cmds$category == category, ]
   }
 

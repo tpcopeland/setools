@@ -55,8 +55,11 @@ The algorithm works as follows:
 \enumerate{
 \item Find the first date where EDSS >= \code{threshold} for each person.
 \item Check the confirmation window: within \code{confirmwindow} days after
-that date, the minimum EDSS must remain >= \code{baselinethreshold} and the
-last value in the window must remain >= \code{threshold}.
+that date, the minimum EDSS and the last EDSS value are evaluated.
+The event is rejected (not sustained) only when \strong{both} the minimum
+EDSS is below \code{baselinethreshold} \strong{and} the last value is below
+\code{threshold}. This ensures the replacement value (last) is below
+threshold, preventing infinite iteration.
 \item If not sustained, the EDSS at the event date is replaced with the
 last observed value in the window (using \code{min()} for same-date
 duplicates, matching Stata behavior), and the search restarts.

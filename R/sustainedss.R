@@ -9,8 +9,11 @@
 #' \enumerate{
 #'   \item Find the first date where EDSS >= `threshold` for each person.
 #'   \item Check the confirmation window: within `confirmwindow` days after
-#'     that date, the minimum EDSS must remain >= `baselinethreshold` and the
-#'     last value in the window must remain >= `threshold`.
+#'     that date, the minimum EDSS and the last EDSS value are evaluated.
+#'     The event is rejected (not sustained) only when **both** the minimum
+#'     EDSS is below `baselinethreshold` **and** the last value is below
+#'     `threshold`. This ensures the replacement value (last) is below
+#'     threshold, preventing infinite iteration.
 #'   \item If not sustained, the EDSS at the event date is replaced with the
 #'     last observed value in the window (using `min()` for same-date
 #'     duplicates, matching Stata behavior), and the search restarts.
@@ -101,6 +104,7 @@
 sustainedss <- function(dt, idvar, edssvar, datevar, threshold,
                         confirmwindow = 182L, baselinethreshold = NULL) {
   if (threshold <= 0) stop("threshold must be positive", call. = FALSE)
+  if (confirmwindow <= 0) stop("confirmwindow must be positive", call. = FALSE)
   if (is.null(baselinethreshold)) baselinethreshold <- threshold
 
   dt <- data.table::as.data.table(data.table::copy(dt))
@@ -188,7 +192,7 @@ sustainedss <- function(dt, idvar, edssvar, datevar, threshold,
   result <- unique(work[!is.na(work$ss_sustained_dt_), .(ss_id_, ss_sustained_dt_)])
   data.table::setnames(result, c("ss_id_", "ss_sustained_dt_"), c(idvar, "sustained_dt"))
 
-  if (date_is_Date && nrow(result) > 0) {
+  if (date_is_Date) {
     result[, sustained_dt := as.Date(sustained_dt, origin = "1970-01-01")]
   }
 

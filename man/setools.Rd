@@ -4,13 +4,11 @@
 \alias{setools}
 \title{Display setools package information}
 \usage{
-setools(category = "all", detail = FALSE)
+setools(category = c("all", "dates", "codes", "migration", "ms"))
 }
 \arguments{
-\item{category}{Filter by category: "all" (default), "dates", "codes",
-"migration", or "ms".}
-
-\item{detail}{Logical; if TRUE, show detailed function signatures.}
+\item{category}{Filter by category: \code{"all"} (default), \code{"dates"}, \code{"codes"},
+\code{"migration"}, or \code{"ms"}. Partial matching is supported.}
 }
 \value{
 Invisibly returns a data.frame of commands with name, category,
